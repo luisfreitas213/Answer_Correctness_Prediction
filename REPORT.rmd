@@ -1,0 +1,604 @@
+---
+title: "Aprendizegem Automática I"
+author: "Luís Freitas PG38347, Luís Maia A84241"
+date: "21/12/2020"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+\section{Config Directory}
+```{r echo=TRUE}
+D = "C:/workspaceschool/Project_answerCP/"
+#D = "/mnt/c/workspaceschool/Project_answerCP/"
+setwd(D)
+print(paste0("A diretoria do projeto é: ",D[1]))
+```
+
+\section{Install Packages}
+```{r echo=TRUE}
+#This extension is used for the "countLines" function in Insert Data 
+#install.packages("R.utils")
+library(R.utils)
+#This extension is used for the "laf_open" function
+#install.packages("LaF")
+library(LaF)
+#install.packages("stringr")
+library(stringr)
+#install.packages("tidyr")
+library(tidyr)
+#install.packages(sqldf)
+library(sqldf)
+#install.packages("dplyr")
+library(dplyr)
+#install.packages("foreach")
+library(foreach)
+#install.packages("doParallel")
+library(doParallel)
+#install.packages("ggplot2")
+library(ggplot2)
+#install.packages("scales")
+library(scales)
+#install.packages("graphics")
+library(graphics)
+#install.packages("corrplot")
+library(corrplot)
+#install.packages("GGally")
+library(GGally)
+#install.packages("caret")
+library(caret)
+#install.packages("mlbench")
+library(mlbench)
+#install.packages("e1071")
+library(e1071)
+#install.packages("randomForest")
+library(randomForest)
+#install.packages('Boruta')
+library(Boruta)
+#install.packages('glmnet')
+library(glmnet)
+#install.packages('faraway')
+library(faraway)
+
+```
+
+
+\section{Insert Databases}
+```{r echo=TRUE}
+#insert dataset questions
+Filename1 ="database_aa1/questions.csv" 
+questions = read.csv2((paste0(D,Filename1)), sep = ",", dec = ".")
+
+#insert dataset lectures
+Filename2 ="database_aa1/lectures.csv"
+lectures = read.csv2((paste0(D,Filename2)), sep = ",",dec = ".")
+
+#insert dataset train_sample
+Filename3 ="database_aa1/sample/train_sample.csv"
+train_sample = read.csv2(paste0(D,Filename3), sep = ",", header = FALSE, dec = ".")
+
+#insert total lectures of train
+Filename4 = "database_aa1/sample/lecture_total.csv"
+total_lecture = read.csv2(paste0(D,Filename4), sep = ",", dec = ".")
+
+#insert headers in data frame train_sample and in total lectures
+Filename5 ="database_aa1/train.csv"
+columns_name = read.csv2(paste0(D,Filename5), sep = ",", header = FALSE, nrows=1, dec = ".")
+for (i in 1:dim(train_sample)[2]) {
+  names(train_sample)[i] <- as.character(columns_name[1,i])
+  names(total_lecture)[i]<- as.character(columns_name[1,i])
+}
+
+#remove temporary variables
+rm(Filename1, Filename2, Filename3, Filename4, Filename5, columns_name, i)
+```
+
+```{r echo=TRUE}
+#head of dataset questions
+head(questions, n = 10)
+```
+
+```{r echo=TRUE}
+#head of dataset lectures
+head(lectures, n = 10)
+```
+
+```{r echo=TRUE}
+#head of dataset train
+head(train_sample, n = 10)
+```
+
+\section{Data Preparation}
+```{r echo=TRUE}
+#Remove lectures of train
+train_question = train_sample[train_sample$content_type_id == 0,]
+
+#Merge questions and train 
+names(questions)[1] <- "content_id"
+train_question = merge(x = train_question, y = questions, by = "content_id", all.x = TRUE)
+
+#remove feature row_id and user_answer
+train_question = train_question[-c(2,5,7)]
+
+
+#Separate Tags
+train_question = train_question %>% 
+  separate(tags, c("tag1","tag2","tag3", "tag4"), sep = " ")
+
+#Features Engineering to join information of user
+question_gb = fn$sqldf("Select user_id, count(distinct task_container_id) as count_tasks, sum(answered_correctly) as correct, 
+                       sum(cast(answered_correctly as double))/count(cast(answered_correctly as double)) as perc_correct 
+                       from train_question group by user_id ")
+train_question = merge(x = train_question, y = question_gb, by = "user_id", all.x = TRUE)
+names(lectures)[1] <- "content_id"
+total_lecture = merge(x = total_lecture, y = lectures, by = "content_id", all.x = TRUE)
+total_lecture = total_lecture[-c(1,2,5,7,8,9,10)]
+lecture_gb = fn$sqldf("Select user_id, count(distinct task_container_id) as count_lectures,
+                         count(distinct tag) as count_tag from total_lecture group by user_id ")
+train_question = merge(x = train_question, y = lecture_gb, by = "user_id", all.x = TRUE)
+
+##This code transform user information in information in the moment of the question ( run parallel ) have a big computing cust
+#setup parallel backend to use many processors
+#cores=detectCores()
+#cl <- makeCluster(cores[1]-1) #not to overload your computer
+#registerDoParallel(cl)
+#list = foreach (i = 1:length(train_question[,1])) %dopar% {
+#  user = train_question[i,1]
+#  time = train_question[i,3]
+#  question_gb = fn$sqldf("Select user_id, count(distinct task_container_id) as count_tasks,
+#                        sum(answered_correctly) as correct, count(answered_correctly) as count_answers,
+#                       sum(cast(answered_correctly as double))/count(cast(answered_correctly as double)) as perc_correct 
+#                       from train_question where user_id = '$user' and timestamp < '$time' group by user_id ")
+#  lecture_gb = fn$sqldf("Select user_id, count(distinct task_container_id) as count_lectures,
+#                        count(distinct tag) as count_tag from total_lecture where user_id = '$user' and timestamp < '$time' group by user_id ")
+#  train_question[i,15] = question_gb[1,2]
+#  train_question[i,16] = question_gb[1,3]
+#  train_question[i,17] = question_gb[1,4]
+#  train_question[i,18] = question_gb[1,5]
+#  train_question[i,19] = lecture_gb[1,2]
+#  train_question[i,20] = lecture_gb[1,3]
+
+#  print(i)
+#}
+#stopCluster(cl)
+
+#Correction type of Data
+train_question = transform(train_question, content_id = as.factor(content_id), user_id = as.factor(user_id), 
+                           task_container_id = as.factor(task_container_id), answered_correctly = as.factor(answered_correctly), 
+                           bundle_id = as.factor(bundle_id), correct_answer = as.factor(correct_answer), 
+                           part = as.factor(part), tag1 = as.factor(tag1), tag2 = as.factor(tag2), tag3 = as.factor(tag3), tag4 = as.factor(tag4))
+
+#NA´S TRANSFORM
+train_question$prior_question_elapsed_time[is.na(train_question$prior_question_elapsed_time)] <- 0 # replace with "0"
+train_question$tag1[is.na(train_question$tag1)] <- "0" # replace with "0"
+train_question$tag2[is.na(train_question$tag2)] <- "0" # replace with "0"
+train_question$tag3[is.na(train_question$tag3)] <- "0" # replace with "0"
+train_question$tag4[is.na(train_question$tag4)] <- "0" # replace with "0"
+train_question$count_lectures[is.na(train_question$count_lectures)] <- 0 # replace with "0"
+train_question$count_tag[is.na(train_question$count_tag)] <- 0 # replace with "0"
+train_question$prior_question_had_explanation = as.character(train_question$prior_question_had_explanation)
+train_question$prior_question_had_explanation[train_question$prior_question_had_explanation == ""]<- "Undefined" # replace with NA
+train_question$prior_question_had_explanation = as.factor(train_question$prior_question_had_explanation)
+
+#Reduce Name Columns and dataset
+names(train_question)[4] <- "task_id"
+names(train_question)[6] <- "pqetime"
+names(train_question)[7] <- "pqhexpla"
+
+df = train_question
+
+#train_question$prior_question_had_explanation[is.na(train_question$prior_question_had_explanation)] <- 
+#remove not important dataframes
+rm(train_question, lectures, questions, train_sample, lecture_gb, question_gb, total_lecture, train_sample)
+rm(cl, time, user, cores)
+
+head(df)
+```
+
+\subsection{Data Analytics}
+```{r echo=TRUE}
+#count lines of total data set
+n_rows = countLines(paste0(D,"database_aa1/train.csv"))
+n_rows = n_rows[1]
+cat("This is a number of rows of total dataset train: ",n_rows)
+rm(r_rows)
+```
+
+```{r echo=TRUE}
+#Dim of sample dataset 
+cat("This is a dimension of sample dataset train: ",dim(df))
+``` 
+
+```{r echo=TRUE}
+#summary of dataset
+summary(df)
+```
+
+\subsubsection{Balanceamento da Variavel "Answered_Correctly"}
+
+```{r echo=TRUE}
+#Answered_Correctly 
+
+d <- data.frame(
+  group = c("Correct", "Incorrect"),
+  value = c(length(df$answered_correctly[df$answered_correctly == "1"]), 
+            length(df$answered_correctly[df$answered_correctly == "0"])))
+d
+bp<- ggplot(d, aes(x="", y=value, fill=group))+
+geom_bar(width = 1, stat = "identity")
+pie <- bp + coord_polar("y", start=0)
+pie = pie + scale_fill_brewer(palette="Dark2")+
+  theme_minimal()
+pie
+
+```
+\subsubsection{Variavel "user_id"}
+
+\subsubsection{Análise da Variavel "part"}
+
+```{r echo=TRUE}
+ci <- data.frame(df[, c(5,10)])
+mci <- aggregate(ci, list(ci$part), function(x) mean(as.numeric(as.character(x))))
+mci <- mci[c(3,2)]
+counts <- mci$answered_correctly
+
+barplot(counts, main="Respostas corretas por capítulo", horiz=TRUE,
+  xlab = "Percentagem",
+  ylab = "Capítulo",
+  names.arg=c("1", "2", "3", "4", "5", "6", "7"))
+``` 
+
+\subsubsection{Variavel "prior_question_elapsed_time"}
+
+```{r echo=TRUE}
+par(mfrow=c(1,2))
+hist(df$pqetime)
+boxplot(df$pqetime)
+``` 
+
+\subsubsection{Variavel "prior_question_had_explanation"}
+
+```{r echo=TRUE}
+#Answered_Correctly 
+
+d <- data.frame(
+  group = c("Questão tinha explicação", "Questão não tinha explicação", "Não Definido"),
+  value = c(length(df$pqhexpla[df$pqhexpla == "True"]), 
+            length(df$pqhexpla[df$pqhexpla == "False"]),
+            length(df$pqhexpla[df$pqhexpla == "Undefined"])))
+d
+bp<- ggplot(d, aes(x="", y=value, fill=group))+
+geom_bar(width = 1, stat = "identity")
+pie <- bp + coord_polar("y", start=0)
+pie = pie + scale_fill_brewer(palette="Dark2")+
+  theme_minimal()
+pie
+
+``` 
+
+
+\subsubsection{Balanceamento das Variaveis "Tags"}
+
+```{r echo=TRUE}
+#Answered_Correctly 
+df_tags <- df[c(11:14)]
+count <- table(unlist(df_tags))
+result <- data.frame(tag = sprintf("%03d", as.integer(names(count))),
+                     count = as.integer(count))
+
+result<-result[!(result$tag=="000"),]
+result <- result[order(-result$count),]
+head(result,5)
+hist(result$count)
+
+```
+
+\subsubsection{Balanceamento da variavel "count_tasks"}
+
+```{r echo=TRUE}
+#Answered_Correctly
+par(mfrow=c(1,2))
+hist(df$count_tasks)
+boxplot(df$count_tasks)
+
+``` 
+\subsubsection{Balanceamento da variavel "correct"}
+
+```{r echo=TRUE}
+par(mfrow=c(1,2))
+hist(df$correct)
+boxplot(df$correct)
+
+c <- data.frame(df[, c(9,5)])
+mci <- aggregate(c, list(c$correct_answer), function(x) mean(as.numeric(as.character(x))))
+mci <- mci[c(2,3)]
+counts <- mci$answered_correctly
+par(mfrow=c(1,1))
+barplot(counts, main="Respostas correta por Pergunta", horiz=TRUE,
+  xlab = "Percentagem",
+  ylab = "Resposta",
+  names.arg=c("0", "1", "2", "3"))
+```
+
+\subsubsection{Balanceamento da variavel "perc_correct"}
+
+```{r echo=TRUE}
+par(mfrow=c(1,2))
+hist(df$perc_correct)
+boxplot(df$perc_correct)
+x = df$perc_correct
+x[ x != 0 && x!= 1 ] = 0.5
+```
+
+\subsubsection{Balanceamento da variavel "count_tag"}
+
+```{r echo=TRUE}
+par(mfrow=c(1,2))
+hist(df$count_tag)
+boxplot(df$count_tag)
+```
+\subsubsection{Análise da Variavel "Timestamp" e da "prior}
+
+A variavél timestamp apresenta valores com com maior frequencia em valores mais pequenos.  
+```{r echo=TRUE}
+par(mfrow=c(1,2))
+hist(df$timestamp)
+boxplot(df$timestamp)
+``` 
+
+\subsubsection{Influencia da count_lectures e da perc_correct}
+```{r echo = TRUE}
+df%>% mutate(y = answered_correctly) %>% 
+ggplot(aes(count_lectures, perc_correct, fill = y, color=y)) + geom_point(show.legend = FALSE) + stat_ellipse(type="norm")
+```
+\subsubsection{Análise de Correlações das variáveis numéricas}
+
+```{r echo=TRUE}
+M1 = data.frame(df$timestamp,df$pqetime, df$count_tasks, 
+               df$correct,  df$perc_correct, 
+               df$count_lectures, df$count_tag)
+M = cor(M1)
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+p.mat <- cor.mtest(M1)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(M, method="color", col=col(200),  
+         type="upper", order="hclust", 
+         addCoef.col = "black", # Add coefficient of correlation
+         tl.col="black", tl.srt=45, #Text label color and rotation
+         # Combine with significance
+         p.mat = p.mat, sig.level = 0.01, insig = "blank", 
+         # hide correlation coefficient on the principal diagonal
+         diag=FALSE 
+         )
+```
+
+```{r echo=TRUE}
+panel.hist <- function(x, ...)
+{
+  usr <- par("usr"); on.exit(par(usr))
+  par(usr = c(usr[1:2], 0, 1.5) )
+  h <- hist(x, plot = FALSE)
+  breaks <- h$breaks; nB <- length(breaks)
+  y <- h$counts; y <- y/max(y)
+  rect(breaks[-nB], 0, breaks[-1], y, col = "cyan", ...)
+}
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+  usr <- par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r <- abs(cor(x, y))
+  txt <- format(c(r, 0.123456789), digits = digits)[1]
+  txt <- paste0(prefix, txt)
+  if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+
+p = data.frame(df$count_tasks, df$correct, df$count_tag, df$count_lectures)
+pairs(p, diag.panel = panel.hist, upper.panel = panel.cor,
+      lower.panel = panel.smooth)
+
+```
+
+
+```{r echo=TRUE}
+ggpairs(df, columns = c(15, 16, 19, 18), ggplot2::aes(colour=df$answered_correctly))
+ggpairs(df, columns = c(17, 6, 3), ggplot2::aes(colour=df$answered_correctly))
+rm(col, cor.mtest, panel.cor, panel.hist, pie, p, p.mat, M1, M, d, bp)
+```
+
+\section{Data Preparation for models}
+```{r echo=TRUE}
+#Remove features with many categories
+df = df[-1] #user_id
+df = df[-1] #content_id
+df = df[-2] #task_id 
+df = df[-5] #bundle_id
+df = df[-7] #tag_1
+df = df[-7] #tag_2 
+df = df[-7] #tag_3
+df = df[-7] #tag_4
+
+#Organize features
+df1 = df[2]
+df = df[-2]
+df = data.frame(df1, df)
+rm(df1)
+summary(df)
+head(df)
+```
+\section{Feature Selection Algorithms}
+\subsection{Feature Selection Methods - RFE}
+```{r echo=TRUE}
+#RECURSIVE FEATURES ELIMINATION
+# ensure the results are repeatable
+set.seed(7)
+# define the control using a random forest selection function
+control <- rfeControl(functions=rfFuncs, method="cv", number=5)
+# run the RFE algorithm
+results <- rfe(df[,2:11], df[,1], sizes=c(1:10), rfeControl=control, verbose = FALSE)
+# summarize the results
+print(results)
+# list the chosen features
+predictors(results)
+# plot the results
+plot(results, type=c("g", "o"))
+```
+\subsection{Feature Selection Methods - Boruta}
+```{r echo=TRUE}
+#BORUTA
+boruta_output <- Boruta(answered_correctly ~ ., data=na.omit(df), doTrace=1, maxRuns=11)
+names(boruta_output)
+# Get significant variables including tentatives
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+print(boruta_signif) 
+# Do a tentative rough fix
+roughFixMod <- TentativeRoughFix(boruta_output)
+boruta_signif <- getSelectedAttributes(roughFixMod)
+print(boruta_signif)
+# Variable Importance Scores
+imps <- attStats(roughFixMod)
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+head(imps2[order(-imps2$meanImp), ])  # descending sort
+# Plot variable importance
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")
+```
+\subsection{Feature Selection Methods - Multicolineariedade}
+```{r echo=TRUE}
+#Multicolineariedade
+df1 = data.frame(df$perc_correct, df$correct, df$count_tasks, df$timestamp, df$count_tag, df$count_lectures,  df$pqetime)
+require(faraway)
+vif(df1)
+
+#Multicolineariedade
+df1 = data.frame(df$perc_correct, df$correct, df$count_tasks, df$timestamp, df$count_tag,  df$pqetime) #count lectures
+require(faraway)
+vif(df1)
+
+#Multicolineariedade
+df1 = data.frame(df$perc_correct, df$correct, df$timestamp, df$count_tag,  df$pqetime) #count tasks
+require(faraway)
+vif(df1)
+```
+
+\subsection{Logistic Regression Model Part 1}
+```{r echo=TRUE}
+
+# ensure the results are repeatable
+set.seed(7)
+k <- df$answered_correctly
+test_index <- createDataPartition(k, times = 1, p = 0.8, list = FALSE)
+train_set <- df %>% slice(-test_index)
+test_set <- df %>% slice(test_index)
+y = as.numeric(train_set$answered_correctly == "1")
+train_set = data.frame(y, train_set[-1])
+
+# fit logistic regression model
+glm_fit <- glm(y ~ perc_correct + correct  + part + pqhexpla + timestamp + count_tag  + pqetime, data= train_set, family = "binomial")
+summary(glm_fit)
+coef(glm_fit)
+# accuracy 
+p_hat_logit <- predict(glm_fit, newdata = test_set, type = "response")
+y_hat_logit <- ifelse(p_hat_logit > 0.5, "1", "0") %>% factor
+confusionMatrix(y_hat_logit, test_set$answered_correctly)
+```
+\subsubsection{StepWise Algorithm - both}
+```{r echo=TRUE}
+#step 
+fit1=step(glm_fit,direction="both")
+```
+\subsubsection{StepWise Algorithm - forward}
+```{r echo=TRUE}
+fit2=step(glm(y ~ 1, data = train_set, family = "binomial"),direction="forward", scope = ~ perc_correct + correct  + part + pqhexpla + timestamp + count_tag  + pqetime)
+```
+\subsubsection{StepWise Algorithm - backward}
+```{r echo=TRUE}
+fit3=step(glm_fit,direction="backward")
+```
+\subsubsection{Logistic Regression Model Part 1}
+```{r echo=TRUE}
+#accuracy_fit3
+summary(fit3)
+p_hat_logit <- predict(fit3, newdata = test_set, type = "response")
+y_hat_logit <- ifelse(p_hat_logit > 0.5, "1", "0") %>% factor
+confusionMatrix(y_hat_logit, test_set$answered_correctly)
+```
+
+\section{Machine Learning Algorithms}
+\subsection{Random Forest}
+
+```{r echo=TRUE}
+# ensure the results are repeatable
+set.seed(7)
+# train and test
+k <- df$answered_correctly
+test_index <- createDataPartition(k, times = 1, p = 0.8, list = FALSE)
+train_set <- df %>% slice(-test_index)
+test_set <- df %>% slice(test_index)
+
+# Decision Tree With Cross-Validation
+train.control <- trainControl(method = "cv", number = 10)
+train_rf <- train(answered_correctly ~ perc_correct + correct  + part + pqhexpla + timestamp,
+                     method = "Rborist", nTree = 5,
+                     tuneGrid = data.frame(predFixed = 2, minNode = seq(1, 100, 1)),
+                     data = train_set, trControl = train.control)
+
+ggplot(train_rf)
+confusionMatrix(predict(train_rf, test_set), test_set$answered_correctly)
+
+```
+
+\subsection{KNN Model}
+```{r echo=TRUE}
+#normalize data
+preproc2 <- preProcess(df, method=c("range"))
+norm2 <- predict(preproc2, df)
+head(norm2)
+
+# ensure the results are repeatable
+set.seed(7)
+dff = data.frame(norm2$answered_correctly,  norm2$perc_correct , norm2$correct , norm2$part,
+                 norm2$pqhexpla, norm2$timestamp)
+#KNN TRAIN
+y <- dff$norm2.answered_correctly
+test_index <- createDataPartition(y, times = 1, p = 0.2, list = FALSE)
+train_set <- dff %>% slice(-test_index)
+test_set <- dff %>% slice(test_index)
+
+train.control <- trainControl(method = "cv", number = 10)
+train_knn <- train(norm2.answered_correctly ~ . ,   
+                   method = "knn", tuneGrid = data.frame(k = seq(260, 280, 2)),
+                   data = train_set,trControl = train.control)
+
+# BEST K
+train_knn$results %>% 
+  ggplot(aes(x = k, y = Accuracy)) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(x = k, 
+                    ymin = Accuracy - AccuracySD,
+                    ymax = Accuracy + AccuracySD))
+ggplot(train_knn, highlight = TRUE)
+train_knn$bestTune
+
+# PREDICT
+kss = train_knn$bestTune
+knn_fit_ks <- knn3(norm2.answered_correctly ~ ., data = train_set, k = kss)
+y_hat_knn_ks <- predict(knn_fit_ks, test_set, type = "class")
+confusionMatrix(data=y_hat_knn_ks, reference=test_set$norm2.answered_correctly)
+```
+
+

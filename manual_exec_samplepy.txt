@@ -1,0 +1,34 @@
+###EXECUTE THIS COMMANDS IN THE DIR OF PROJECT
+
+"THIS PROGRAM CREATE ALEATORY SAMPLE OF THE DATASET TRAIN"
+
+THE DIRECTORY ORGANIZATION: 
+
+<dir project>/database_aa1/      #with datasets (train.csv,questions.csv,lectures.csv) 
+
+<dir project>/               #with shell script (samplepy.sh) 
+
+<dir project>                #RREPORT.RMD (RMARKDOWN APP)
+
+##COMMAND LINE UBUNTO TO EXECUTE
+
+cd <dir project>/project_aa1/
+sudo apt install r-base-core
+sudo Rscript -e 'install.packages("R.utils")'
+sudo Rscript -e 'install.packages("rmarkdown")'
+sudo Rscript -e 'install.packages("LaF")'
+sudo apt install pandoc
+sudo Rscript -e 'install.packages("tinytex")'
+sudo apt-get install texlive-latex-base
+sudo mkdir sample
+sudo pt-get update
+sudo apt install python-pip
+sudo pip install virtualenv
+sudo virtualenv python
+pip install --upgrade pip
+pip install subsample
+pip install numpy pandas
+chmod u+x samplepy.sh
+./samplepy.sh <dir project> <nr_row sample>
+
+ 
